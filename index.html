@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
+  <title>P6 Lite · PWA Scheduler</title>
+  <!-- Tailwind via CDN + basic custom spacing for mobile -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0f172a">
+  <style>
+    /* extra touch-friendly styles */
+    button, .clickable { touch-action: manipulation; }
+    .gantt-svg { background: #f8fafc; border-radius: 0.5rem; }
+    .activity-row { border-bottom: 1px solid #e2e8f0; }
+    .modal-overlay { background: rgba(0,0,0,0.5); }
+    /* ensure modal is above everything */
+    .modal { z-index: 50; }
+  </style>
+</head>
+<body class="bg-slate-50 font-sans antialiased">
+
+  <!-- main container: mobile padding, max width for larger screens -->
+  <main class="max-w-3xl mx-auto px-3 py-4 sm:px-4">
+
+    <!-- header + buttons -->
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
+      <h1 class="text-2xl font-bold text-slate-800">P6 Lite</h1>
+      <div class="flex flex-wrap gap-1">
+        <button id="importBtn" class="bg-white border border-slate-300 text-sm px-3 py-2 rounded shadow-sm active:bg-slate-100">📂 Import</button>
+        <button id="exportBtn" class="bg-white border border-slate-300 text-sm px-3 py-2 rounded shadow-sm active:bg-slate-100">⬇️ Export</button>
+        <button id="printBtn" class="bg-white border border-slate-300 text-sm px-3 py-2 rounded shadow-sm active:bg-slate-100">🖨️ Print</button>
+        <button id="templateBtn" class="bg-white border border-slate-300 text-sm px-3 py-2 rounded shadow-sm active:bg-slate-100">📋 EPC</button>
+        <button id="settingsBtn" class="bg-white border border-slate-300 text-sm px-3 py-2 rounded shadow-sm active:bg-slate-100">⚙️</button>
+      </div>
+    </div>
+
+    <!-- project start + check logic row -->
+    <div class="flex flex-col sm:flex-row sm:items-center gap-3 mb-5 bg-white p-3 rounded shadow-sm">
+      <div class="flex items-center gap-2">
+        <label class="text-sm font-medium text-slate-700">Start date:</label>
+        <input type="date" id="projectStart" class="border border-slate-300 rounded px-2 py-1 text-sm">
+      </div>
+      <button id="checkLogicBtn" class="bg-amber-50 border border-amber-300 text-amber-800 text-sm px-4 py-2 rounded shadow-sm active:bg-amber-100">🔍 Check logic</button>
+    </div>
+
+    <!-- activity list header + add button -->
+    <div class="flex justify-between items-center mb-2">
+      <h2 class="text-lg font-semibold text-slate-700">Activities</h2>
+      <button id="addActivityBtn" class="bg-blue-600 text-white text-sm px-4 py-2 rounded shadow-sm active:bg-blue-700">+ New</button>
+    </div>
+
+    <!-- activity list container (will be populated by JS) -->
+    <div id="activityList" class="bg-white rounded shadow-sm divide-y divide-slate-200 mb-6"></div>
+
+    <!-- simple Gantt SVG area -->
+    <h2 class="text-lg font-semibold text-slate-700 mb-2">Timeline (days)</h2>
+    <div class="bg-white p-2 rounded shadow-sm overflow-x-auto">
+      <svg id="ganttSvg" class="gantt-svg w-full" height="200" viewBox="0 0 800 200" preserveAspectRatio="xMidYMid meet"></svg>
+    </div>
+
+    <!-- hidden file input for import -->
+    <input type="file" id="importFile" accept=".json,application/json" class="hidden">
+
+    <!-- edit modal (hidden by default) -->
+    <div id="editModal" class="modal fixed inset-0 modal-overlay hidden flex items-center justify-center p-4">
+      <div class="bg-white rounded-lg w-full max-w-md p-5 shadow-xl">
+        <h3 class="text-lg font-bold mb-3" id="modalTitle">Edit Activity</h3>
+        <form id="activityForm" class="space-y-3">
+          <input type="hidden" id="editId">
+          <div>
+            <label class="block text-sm font-medium mb-1">Name</label>
+            <input type="text" id="editName" class="w-full border border-slate-300 rounded px-3 py-2 text-sm" required>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="block text-sm font-medium mb-1">Duration (days)</label>
+              <input type="number" id="editDuration" min="0" step="1" value="1" class="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+            </div>
+            <div>
+              <label class="block text-sm font-medium mb-1">Type</label>
+              <select id="editType" class="w-full border border-slate-300 rounded px-3 py-2 text-sm bg-white">
+                <option value="Task">Task</option>
+                <option value="Milestone">Milestone</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">Category</label>
+            <select id="editCategory" class="w-full border border-slate-300 rounded px-3 py-2 text-sm bg-white">
+              <option>Early Design</option>
+              <option>Engineering</option>
+              <option>Procurement</option>
+              <option>Construction</option>
+              <option>Commissioning</option>
+              <option>Start up</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-2">Predecessors (id:type)</label>
+            <div id="predecessorList" class="space-y-1 max-h-32 overflow-y-auto border p-2 rounded bg-slate-50 text-sm"></div>
+            <div class="flex gap-1 mt-2">
+              <input type="text" id="newPredId" placeholder="Activity ID" class="w-20 border border-slate-300 rounded px-2 py-1 text-xs">
+              <select id="newPredType" class="border border-slate-300 rounded px-2 py-1 text-xs bg-white">
+                <option value="FS">FS</option>
+                <option value="SS">SS</option>
+              </select>
+              <button type="button" id="addPredBtn" class="bg-slate-200 text-xs px-3 py-1 rounded">Add</button>
+            </div>
+          </div>
+          <div class="flex gap-2 pt-2">
+            <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded text-sm flex-1">Save</button>
+            <button type="button" id="cancelModalBtn" class="bg-slate-200 px-4 py-2 rounded text-sm flex-1">Cancel</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- settings modal -->
+    <div id="settingsModal" class="modal fixed inset-0 modal-overlay hidden flex items-center justify-center p-4">
+      <div class="bg-white rounded-lg w-full max-w-sm p-5 shadow-xl">
+        <h3 class="text-lg font-bold mb-3">Settings</h3>
+        <div class="space-y-3">
+          <div>
+            <label class="block text-sm font-medium mb-1">Working hours / day</label>
+            <input type="number" id="workingHours" min="1" max="24" value="8" class="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">Default duration (days)</label>
+            <input type="number" id="defaultDuration" min="0" value="1" class="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+          </div>
+        </div>
+        <div class="flex gap-2 mt-4">
+          <button id="saveSettingsBtn" class="bg-blue-600 text-white px-4 py-2 rounded text-sm flex-1">Save</button>
+          <button id="cancelSettingsBtn" class="bg-slate-200 px-4 py-2 rounded text-sm flex-1">Close</button>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- include the main app script -->
+  <script src="app.js"></script>
+  <!-- register service worker for PWA -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js')
+        .then(() => console.log('SW registered'))
+        .catch(err => console.error('SW registration failed:', err));
+    }
+  </script>
+</body>
+</html>
